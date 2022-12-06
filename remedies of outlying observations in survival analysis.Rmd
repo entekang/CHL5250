@@ -1,0 +1,109 @@
+---
+title: "Remedies for outlying observations in survival analysis"
+author: "Ente Kang"
+output:
+  html_document:
+    df_print: paged
+date: "2022-12-06"
+---
+
+```{r, echo=F, warning=F}
+library(reportRmd)
+library(tidyverse)
+library(survival)
+library(survival)
+
+
+
+d <- pembrolizumab %>% select(-c(id, orr, cbr, os_status, os_time)) %>% 
+  drop_na()
+tab <- rm_covsum(d, maincov = 'pfs_status', covs = c('age', 'sex', 'cohort', 'l_size', 
+                                            'pdl1', 'tmb', 'baseline_ctdna', 
+                                            'change_ctdna_group'), tableOnly = T
+                 , caption = "Summary Statistics")
+names(tab)[1] <- "Predictors"
+names(tab)[3] <- "Censored (n=11)"
+names(tab)[4] <- "Non Censored (n=62)"
+
+outTable(tab)
+```
+
+
+# COX PH (with outliers)
+```{r}
+library(kableExtra)
+coxfull <- coxph(Surv(pfs_time, pfs_status) ~., data = d)
+cfsum <- round(summary(coxfull)$coefficients, 2)
+cfsum %>% kbl(caption = "Cox Proportional Hazards") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+# concordance 0.757
+concordance(coxfull)[[1]]
+
+```
+
+
+# remove outliers 
+```{r}
+library(survBootOutliers)
+osd <- survBootOutliers((Surv(d$pfs_time, d$pfs_status)), covariate.data = d[,-c(9:10)],
+                        sod.method = "osd",
+          max.outliers = 5)  # using about 5 as max # of outliers
+osdf <- tibble(outlier_indexes = osd$removed_indexes)
+
+osdf %>% kbl() %>%
+  kable_classic(full_width=F, html_font = "Cambria")
+
+outTable(osdf, caption = "Indexes of potential outliers")
+
+```
+
+```{r}
+d2 <- d[-osd$removed_indexes, ]
+
+coxnew <- coxph(Surv(pfs_time, pfs_status) ~., data = d2)
+cfsum <- round(summary(coxnew)$coefficients, 2)
+cfsum %>% kbl(caption = "Cox Proportional Hazards (removed outliers)") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+# concordance 0.827
+concordance(coxnew)[[1]]
+```
+
+
+```{r}
+library(quantreg)
+crqmod <- crq(Surv(pfs_time, pfs_status)~., data = d, taus = c(0.25, 0.5), method = "Portnoy")
+crqsum <- summary.crq(crqmod)
+
+tau_20th <- round(data.frame(crqsum[[1]][2]), 2)
+tau_40th <- round(data.frame(crqsum[[2]][2]), 2)
+
+names(tau_20th) <- c("Coefficient", "CI Lower", "CI Upper", "SE", "Test Statistic", "P-value")
+names(tau_40th) <- c("Coefficient", "CI Lower", "CI Upper", "SE", "Test Statistic", "P-value")
+
+tau_20th %>% kbl(caption = "CQR 20th percentile") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+tau_40th %>% kbl(caption = "CQR 40th percentile") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+
+# robust cox 
+
+```{r}
+library(coxrobust)
+crb <- coxr(Surv(pfs_time, pfs_status)~., data = d)
+crbcoef <- crb$coefficients
+crbdf <- data.frame(round(crbcoef,2))
+colnames(crbdf) <- "Coefficients"
+tib <- tibble(variables = rownames(crbdf), coefficients = crbdf$Coefficients)
+
+tib %>% kbl(caption = "Robust Cox Regression") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+outTable(crbdf, row.names = 'variables', caption = "Coefficients for Robust Cox Regression (full)")
+```
+
